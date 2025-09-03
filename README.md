@@ -26,7 +26,7 @@ This project provides a robust back-end solution using Node.js and Express to pr
 
 1.  **Clone the repository:**
     ```bash
-    git clone <your-repo-url>
+    git clone https://github.com/WasiullahSahito/apiratelimit.git
     cd mern-api-rate-limiting
     ```
 
