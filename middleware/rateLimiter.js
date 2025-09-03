@@ -1,4 +1,4 @@
-const rateLimit = require('express-rate-limit');
+const { rateLimit, ipKeyGenerator } = require('express-rate-limit'); // <-- IMPORT IT HERE
 const slowDown = require('express-slow-down');
 const { RedisStore } = require('rate-limit-redis');
 const { createClient } = require('redis');
@@ -12,20 +12,18 @@ if (process.env.REDIS_URL) {
         });
         redisClient.connect().catch(console.error);
 
-        // Use RedisStore for express-rate-limit
         store = new RedisStore({
             sendCommand: (...args) => redisClient.sendCommand(args),
         });
         console.log('Connected to Redis for rate limiting.');
     } catch (error) {
         console.error('Could not connect to Redis. Falling back to in-memory store.', error);
-        store = null; // Fallback to MemoryStore
+        store = null;
     }
 }
 
 // --- Whitelist Configuration ---
 const whitelist = process.env.RATE_LIMIT_WHITELIST ? process.env.RATE_LIMIT_WHITELIST.split(',') : [];
-
 const skip = (req, res) => whitelist.includes(req.ip);
 
 // --- Custom Handler for Logging ---
@@ -36,8 +34,6 @@ const handler = (req, res, next, options) => {
         ip: req.ip,
         path: req.path,
         method: req.method,
-        limit: options.limit,
-        windowMs: options.windowMs,
     });
     res.status(options.statusCode).send(options.message);
 };
@@ -45,7 +41,6 @@ const handler = (req, res, next, options) => {
 // --- Middleware Definitions ---
 
 // 1. Global Rate Limiter
-// Applied to all requests. Limits to 100 requests per 15 minutes.
 const globalLimiter = rateLimit({
     store,
     windowMs: parseInt(process.env.GLOBAL_RATE_LIMIT_WINDOW_MIN) * 60 * 1000,
@@ -54,14 +49,13 @@ const globalLimiter = rateLimit({
         status: 429,
         message: `Too many requests from this IP, please try again after ${process.env.GLOBAL_RATE_LIMIT_WINDOW_MIN} minutes.`,
     },
-    standardHeaders: 'draft-7', // Recommended standard for RateLimit-* headers
-    legacyHeaders: true, // Also include X-RateLimit-* headers for compatibility
+    standardHeaders: 'draft-7',
+    legacyHeaders: true,
     handler,
     skip,
 });
 
 // 2. Stricter Limiter for Auth Routes
-// Applied to /api/auth/*. Limits to 10 requests per 10 minutes.
 const authLimiter = rateLimit({
     store,
     windowMs: parseInt(process.env.AUTH_RATE_LIMIT_WINDOW_MIN) * 60 * 1000,
@@ -77,18 +71,13 @@ const authLimiter = rateLimit({
 });
 
 // 3. Login Throttler (Brute-force protection)
-// Slows down responses by 500ms for each attempt after the 5th failed login attempt.
 const loginThrottler = slowDown({
-    // Note: express-slow-down uses an in-memory store by default.
-    // For a distributed environment, you'd need a custom Redis store for this as well.
     windowMs: parseInt(process.env.LOGIN_THROTTLE_WINDOW_MIN) * 60 * 1000,
     delayAfter: parseInt(process.env.LOGIN_THROTTLE_DELAY_AFTER),
     delayMs: (hits) => hits * parseInt(process.env.LOGIN_THROTTLE_DELAY_MS),
     skip,
-    // Key generator to identify the user, typically by IP or email.
-    keyGenerator: (req, res) => {
-        return req.ip; // Or req.body.email for more specific throttling
-    },
+    // Use the library's recommended key generator for IP addresses
+    keyGenerator: ipKeyGenerator, // <-- THIS IS THE FIX
 });
 
 module.exports = {
